@@ -1,0 +1,1396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>3D 异形块拼立方体</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; overflow: hidden; font-family: 'Segoe UI', -apple-system, sans-serif; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+#canvas-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; touch-action: none; }
+#webgl-error {
+  display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  color: #ff6b6b; font-size: 16px; text-align: center; padding: 20px; z-index: 100;
+  background: rgba(0,0,0,0.85); border-radius: 12px; max-width: 90vw;
+}
+#ui-panel {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+  padding: 12px 16px; background: rgba(30,30,50,0.92); border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.12); z-index: 10;
+  backdrop-filter: blur(10px); max-width: 95vw;
+}
+#ui-panel button {
+  padding: 8px 14px; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;
+  cursor: pointer; font-size: 13px; color: #e0e0e0; background: rgba(255,255,255,0.08);
+  transition: all 0.2s; white-space: nowrap;
+}
+#ui-panel button:hover { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.4); }
+#ui-panel button:active { transform: scale(0.96); }
+#ui-panel button.primary { background: #4a9eff; border-color: #4a9eff; color: #fff; font-weight: 600; }
+#ui-panel button.danger { background: #e05555; border-color: #e05555; color: #fff; }
+#ui-panel button.mode-btn { font-weight: 600; letter-spacing: 0.3px; min-width: 74px; }
+#ui-panel button.mode-btn.primary { box-shadow: 0 0 12px rgba(74,158,255,0.55); }
+#ui-panel button:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+.axis-label { color: #888; font-size: 11px; padding: 4px 2px; display: flex; align-items: center; }
+#info-bar {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+  color: #ccc; font-size: 14px; background: rgba(30,30,50,0.85);
+  padding: 8px 18px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);
+  z-index: 10; backdrop-filter: blur(8px);
+}
+#info-bar .count { color: #4a9eff; font-weight: 700; }
+#win-overlay {
+  display: none; position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.7); justify-content: center; align-items: center; flex-direction: column;
+}
+#win-overlay.show { display: flex; }
+#win-overlay h2 { color: #ffd700; font-size: 40px; margin-bottom: 16px; text-shadow: 0 0 20px rgba(255,215,0,0.6); }
+#win-overlay button { padding: 12px 28px; font-size: 18px; border-radius: 10px; border: none;
+  background: #4a9eff; color: #fff; cursor: pointer; }
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  #ui-panel { bottom: 8px; gap: 4px; padding: 8px 10px; max-width: 98vw; }
+  #ui-panel button { padding: 10px 12px; font-size: 12px; border-radius: 6px; min-height: 36px; }
+  .axis-label { font-size: 10px; padding: 2px 1px; }
+  #info-bar { top: 8px; font-size: 12px; padding: 6px 12px; }
+  #win-overlay h2 { font-size: 28px; }
+}
+</style>
+</head>
+<body>
+<div id="canvas-container"></div>
+<div id="info-bar">
+  <span id="info-hint">拖拽异形块到目标立方体上松开即可放置</span>
+  <span> | <span id="mode-label">3×3×3</span> 剩余 <span class="count" id="remain-count">27</span> 格</span>
+  <span id="info-status" style="margin-left:12px;font-weight:600;display:none;"></span>
+</div>
+<div id="ui-panel">
+  <span class="axis-label">模式</span>
+  <button id="btn-mode-3" class="mode-btn primary" title="3×3×3（27格）">3×3×3</button>
+  <button id="btn-mode-4" class="mode-btn" title="4×4×4（64格）">4×4×4</button>
+  <button id="btn-mode-5" class="mode-btn" title="5×5×5（125格）">5×5×5</button>
+  <span class="axis-label">绕X轴</span>
+  <button id="btn-rx-cw" disabled title="绕X轴顺时针90°">↻90°</button>
+  <button id="btn-rx-ccw" disabled title="绕X轴逆时针90°">↺90°</button>
+  <span class="axis-label">绕Y轴</span>
+  <button id="btn-ry-cw" disabled title="绕Y轴顺时针90°（水平翻转）">↻90°</button>
+  <button id="btn-ry-ccw" disabled title="绕Y轴逆时针90°（水平翻转）">↺90°</button>
+  <span class="axis-label">绕Z轴</span>
+  <button id="btn-rz-cw" disabled title="绕Z轴顺时针90°（垂直翻转）">↻90°</button>
+  <button id="btn-rz-ccw" disabled title="绕Z轴逆时针90°（垂直翻转）">↺90°</button>
+  <button id="btn-undo" class="danger" title="撤销最后放置的块">撤销</button>
+  <button id="btn-new-puzzle" title="重新生成一套异形块">重新出题</button>
+  <button id="btn-reset" title="重置当前题目">重置</button>
+</div>
+<div id="win-overlay">
+  <h2>拼图完成！</h2>
+  <button id="btn-replay">再来一局</button>
+</div>
+
+<div id="webgl-error">您的设备/浏览器不支持 WebGL，无法加载 3D 引擎。<br>请使用 Chrome/Edge 等现代浏览器打开。</div>
+<div id="loading-msg" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:#aaa;font-size:15px;z-index:99;">加载中...</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+// WebGL 支持检测
+const testCanvas = document.createElement('canvas');
+const gl = testCanvas.getContext('webgl2') || testCanvas.getContext('webgl');
+if (!gl) {
+  document.getElementById('webgl-error').style.display = 'block';
+  document.getElementById('loading-msg').style.display = 'none';
+  throw new Error('WebGL not supported');
+}
+
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ========== 常量（网格尺寸可切换） ==========
+let GRID_SIZE = 3;
+let TOTAL_CELLS = GRID_SIZE ** 3;
+let PIECE_MIN = 3;
+let PIECE_MAX = 5;
+
+// 各模式的块大小区间（保证每块能连通切分，且块数适中）
+const MODE_CONFIG = {
+  3: { min: 3, max: 5 },
+  4: { min: 4, max: 7 },
+  5: { min: 5, max: 10 }
+};
+
+function gridHalf() {
+  return (GRID_SIZE - 1) / 2;
+}
+const COLORS = [
+  0xff6b6b, 0x4ecdc4, 0x45b7d1, 0x96ceb4,
+  0xffeaa7, 0xdda0dd, 0xf8b500, 0x6c5ce7
+];
+
+// ========== 场景初始化 ==========
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+
+// 渐变背景
+const bgColor = new THREE.Color(0x1a1a2e);
+scene.background = bgColor;
+scene.fog = new THREE.Fog(0x1a1a2e, 8, 25);
+
+const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.5, 50);
+camera.position.set(5.5, 3.8, 7.5);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+container.appendChild(renderer.domElement);
+
+// 隐藏加载提示
+document.getElementById('loading-msg').style.display = 'none';
+
+// 移动端横竖屏/窗口大小自适应
+window.addEventListener('resize', () => {
+  camera.aspect = container.clientWidth / container.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(container.clientWidth, container.clientHeight);
+});
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    camera.aspect = container.clientWidth / container.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
+  }, 200);
+});
+
+// 灯光
+const ambientLight = new THREE.AmbientLight(0x404060, 1.8);
+scene.add(ambientLight);
+const sunLight = new THREE.DirectionalLight(0xfff5e8, 3.5);
+sunLight.position.set(8, 12, 5);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.width = 2048;
+sunLight.shadow.mapSize.height = 2048;
+sunLight.shadow.camera.near = 0.5;
+sunLight.shadow.camera.far = 40;
+sunLight.shadow.camera.left = -10;
+sunLight.shadow.camera.right = 10;
+sunLight.shadow.camera.top = 10;
+sunLight.shadow.camera.bottom = -10;
+sunLight.shadow.bias = -0.0001;
+scene.add(sunLight);
+const fillLight = new THREE.DirectionalLight(0x8899cc, 0.8);
+fillLight.position.set(-3, 2, -2);
+scene.add(fillLight);
+
+// OrbitControls - 右键旋转
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 4;
+controls.maxDistance = 14;
+controls.maxPolarAngle = Math.PI * 0.75;
+controls.update();
+
+// ========== 网格坐标转换 ==========
+function gridToWorld(gx, gy, gz) {
+  const h = gridHalf();
+  return new THREE.Vector3(gx - h, gy - h, gz - h);
+}
+
+function worldToGrid(wx, wy, wz) {
+  const h = gridHalf();
+  return {
+    gx: Math.round(wx + h),
+    gy: Math.round(wy + h),
+    gz: Math.round(wz + h)
+  };
+}
+
+// ========== 异形块生成算法 ==========
+function getAllGridCells() {
+  const cells = [];
+  for (let x = 0; x < GRID_SIZE; x++)
+    for (let y = 0; y < GRID_SIZE; y++)
+      for (let z = 0; z < GRID_SIZE; z++)
+        cells.push([x, y, z]);
+  return cells;
+}
+
+function getNeighbors(x, y, z) {
+  const dirs = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+  return dirs.map(([dx,dy,dz]) => [x+dx, y+dy, z+dz])
+    .filter(([nx,ny,nz]) => nx>=0 && nx<GRID_SIZE && ny>=0 && ny<GRID_SIZE && nz>=0 && nz<GRID_SIZE);
+}
+
+function canBeSplit(n) {
+  if (n === 0) return true;
+  if (n < PIECE_MIN) return false;
+  const dp = new Array(n + 1).fill(false);
+  dp[0] = true;
+  for (let i = 1; i <= n; i++) {
+    for (let s = PIECE_MIN; s <= PIECE_MAX; s++) {
+      if (i >= s && dp[i - s]) { dp[i] = true; break; }
+    }
+  }
+  return dp[n];
+}
+
+function isConnected(cells) {
+  if (cells.length <= 1) return true;
+  const set = new Set(cells.map(c => c.join(',')));
+  const visited = new Set();
+  const stack = [cells[0]];
+  visited.add(cells[0].join(','));
+  while (stack.length > 0) {
+    const [x, y, z] = stack.pop();
+    for (const [nx, ny, nz] of getNeighbors(x, y, z)) {
+      const key = [nx, ny, nz].join(',');
+      if (set.has(key) && !visited.has(key)) {
+        visited.add(key);
+        stack.push([nx, ny, nz]);
+      }
+    }
+  }
+  return visited.size === cells.length;
+}
+
+// 检查剩余方块的所有连通分量是否都 >= minSize
+function allRemainingComponentsOK(remainingSet, minSize) {
+  if (remainingSet.size === 0) return true;
+  const visited = new Set();
+  const allKeys = [...remainingSet];
+  for (const startKey of allKeys) {
+    if (visited.has(startKey)) continue;
+    // BFS 找连通分量
+    const stack = [startKey];
+    visited.add(startKey);
+    let compSize = 0;
+    while (stack.length > 0) {
+      compSize++;
+      const key = stack.pop();
+      const [x, y, z] = key.split(',').map(Number);
+      for (const [nx, ny, nz] of getNeighbors(x, y, z)) {
+        const nk = [nx, ny, nz].join(',');
+        if (remainingSet.has(nk) && !visited.has(nk)) {
+          visited.add(nk);
+          stack.push(nk);
+        }
+      }
+    }
+    if (compSize < minSize) return false;
+  }
+  return true;
+}
+
+function generatePieces() {
+  // 多源随机生长：先在立方体内随机撒下若干“种子”，再让所有块同步向外生长，
+  // 保证每块连通、块体紧凑，且必然完整铺满整个立方体（任意网格尺寸都成立）。
+  const allCells = getAllGridCells().map(c => c.join(','));
+
+  const avgSize = Math.max(2, Math.round((PIECE_MIN + PIECE_MAX) / 2));
+  const pieceCount = Math.max(2, Math.round(TOTAL_CELLS / avgSize));
+
+  // 打乱后取前 pieceCount 个作为种子
+  const shuffled = allCells.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  const owner = new Map();          // 格子 -> 块序号
+  const regions = [];               // 每块的格子列表
+  const caps = [];                  // 每块的目标大小
+  const total = Math.min(pieceCount, shuffled.length);
+
+  for (let i = 0; i < total; i++) {
+    const key = shuffled[i];
+    owner.set(key, i);
+    regions.push([key]);
+    caps.push(PIECE_MIN + Math.floor(Math.random() * (PIECE_MAX - PIECE_MIN + 1)));
+  }
+
+  // 把各块目标大小校准到总和恰好等于总格数，避免出现超大块
+  let sumCaps = caps.reduce((a, b) => a + b, 0);
+  let guard = 0;
+  while (sumCaps < TOTAL_CELLS && guard++ < 10000) {
+    const idx = Math.floor(Math.random() * caps.length);
+    if (caps[idx] < PIECE_MAX) { caps[idx]++; sumCaps++; }
+  }
+  while (sumCaps > TOTAL_CELLS && guard++ < 10000) {
+    const idx = Math.floor(Math.random() * caps.length);
+    if (caps[idx] > PIECE_MIN) { caps[idx]--; sumCaps--; }
+  }
+
+  const unassigned = new Set(allCells.filter(k => !owner.has(k)));
+
+  // 轮流生长，直到所有块达到上限或无处可长
+  let progressed = true;
+  while (unassigned.size > 0 && progressed) {
+    progressed = false;
+    // 每轮优先给最小的块补格子，让各块大小更均衡、也更不容易被围死
+    const order = regions
+      .map((r, i) => i)
+      .filter(i => regions[i].length < caps[i])
+      .sort((a, b) => regions[a].length - regions[b].length);
+
+    for (const ri of order) {
+      if (unassigned.size === 0) break;
+      if (regions[ri].length >= caps[ri]) continue;
+
+      // 收集该块的边界空格
+      const borders = [];
+      for (const ck of regions[ri]) {
+        const [x, y, z] = ck.split(',').map(Number);
+        for (const nb of getNeighbors(x, y, z)) {
+          const nk = nb.join(',');
+          if (unassigned.has(nk)) borders.push(nk);
+        }
+      }
+      if (borders.length === 0) continue;
+
+      const pick = borders[Math.floor(Math.random() * borders.length)];
+      owner.set(pick, ri);
+      regions[ri].push(pick);
+      unassigned.delete(pick);
+      progressed = true;
+    }
+  }
+
+  // 若仍有残余格子（各块都到上限了），放开上限继续生长一轮，保证块体仍然紧凑
+  if (unassigned.size > 0) {
+    let more = true;
+    while (unassigned.size > 0 && more) {
+      more = false;
+      for (let ri = 0; ri < regions.length && unassigned.size > 0; ri++) {
+        const borders = [];
+        for (const ck of regions[ri]) {
+          const [x, y, z] = ck.split(',').map(Number);
+          for (const nb of getNeighbors(x, y, z)) {
+            const nk = nb.join(',');
+            if (unassigned.has(nk)) borders.push(nk);
+          }
+        }
+        if (borders.length === 0) continue;
+        const pick = borders[Math.floor(Math.random() * borders.length)];
+        owner.set(pick, ri);
+        regions[ri].push(pick);
+        unassigned.delete(pick);
+        more = true;
+      }
+    }
+  }
+
+  // 极端残余：并入任意相邻块
+  for (const key of [...unassigned]) {
+    const [x, y, z] = key.split(',').map(Number);
+    let merged = false;
+    for (const nb of getNeighbors(x, y, z)) {
+      const ri = owner.get(nb.join(','));
+      if (ri !== undefined) {
+        owner.set(key, ri);
+        regions[ri].push(key);
+        unassigned.delete(key);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) {
+      owner.set(key, regions.length);
+      regions.push([key]);
+      unassigned.delete(key);
+    }
+  }
+
+  // 合并过小的碎块（少于最少格数）到相邻块，避免出现1~2格的零碎块
+  let merged = true;
+  let mergeGuard = 0;
+  while (merged && mergeGuard++ < 200) {
+    merged = false;
+    const alive = regions.filter(r => r.length > 0);
+    if (alive.length <= 1) break;
+    for (let ri = 0; ri < regions.length; ri++) {
+      const reg = regions[ri];
+      if (reg.length === 0 || reg.length >= PIECE_MIN) continue;
+      let target = -1;
+      for (const ck of reg) {
+        const [x, y, z] = ck.split(',').map(Number);
+        for (const nb of getNeighbors(x, y, z)) {
+          const oi = owner.get(nb.join(','));
+          if (oi !== undefined && oi !== ri && regions[oi].length > 0) { target = oi; break; }
+        }
+        if (target >= 0) break;
+      }
+      if (target >= 0) {
+        for (const ck of reg) { owner.set(ck, target); regions[target].push(ck); }
+        regions[ri] = [];
+        merged = true;
+      }
+    }
+  }
+
+  // 转成结构化数据（相对首格归一化，便于旋转与放置）
+  const result = regions
+    .filter(cells => cells.length > 0)
+    .map(cells => {
+      const parsed = cells.map(k => k.split(',').map(Number));
+      // 按最小坐标归一化，保证包围盒从原点起算，排列时才不会穿地
+      const ox = Math.min(...parsed.map(c => c[0]));
+      const oy = Math.min(...parsed.map(c => c[1]));
+      const oz = Math.min(...parsed.map(c => c[2]));
+      return {
+        blocks: parsed.map(([x, y, z]) => [x - ox, y - oy, z - oz]),
+        placed: false,
+        gridPos: null,
+        color: null
+      };
+    })
+    .filter(piece => isConnected(piece.blocks));
+
+  // 极端情况下若生长失败，退回确定性切分
+  if (result.length === 0 || result.reduce((s, p) => s + p.blocks.length, 0) !== TOTAL_CELLS) {
+    return fallbackPieces();
+  }
+
+  result.forEach((piece, i) => { piece.color = COLORS[i % COLORS.length]; });
+  return result;
+}
+
+function fallbackPieces() {
+  // 通用兜底：按 X 方向整行切块（行长 = GRID_SIZE，恒在 [PIECE_MIN, PIECE_MAX] 内）
+  // 相邻的 z 行可合并成板状块，只要合并后不超上限且剩余仍可切分
+  const rows = [];
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let z = 0; z < GRID_SIZE; z++) {
+      const blocks = [];
+      for (let x = 0; x < GRID_SIZE; x++) blocks.push([x, y, z]);
+      rows.push({ y, z, blocks });
+    }
+  }
+
+  const groups = [];
+  let i = 0;
+  while (i < rows.length) {
+    let cur = rows[i].blocks.slice();
+    i++;
+    while (
+      i < rows.length &&
+      rows[i].y === rows[i - 1].y &&
+      rows[i].z === rows[i - 1].z + 1 &&
+      cur.length + rows[i].blocks.length <= PIECE_MAX &&
+      canBeSplit(TOTAL_CELLS - cur.length - rows[i].blocks.length)
+    ) {
+      cur = cur.concat(rows[i].blocks);
+      i++;
+    }
+    groups.push(cur);
+  }
+
+  return groups.map((blocks, idx) => {
+    const ox = Math.min(...blocks.map(c => c[0]));
+    const oy = Math.min(...blocks.map(c => c[1]));
+    const oz = Math.min(...blocks.map(c => c[2]));
+    return {
+      blocks: blocks.map(([x, y, z]) => [x - ox, y - oy, z - oz]),
+      placed: false,
+      gridPos: null,
+      color: COLORS[idx % COLORS.length]
+    };
+  });
+}
+
+// ========== 3D 渲染 ==========
+const allGroups = [];
+const targetMeshes = []; // 目标网格空位mesh（用于raycasting）
+const placedBlockMeshes = []; // 已放置方块的引用
+
+// 目标网格
+const targetGroup = new THREE.Group();
+scene.add(targetGroup);
+let gridBoxLine = null;
+
+// 目标空位 - 半透明白色方块（材质基版，逐格克隆）
+const ghostMat = new THREE.MeshStandardMaterial({
+  color: 0xccccdd,
+  roughness: 0.6,
+  metalness: 0.1,
+  transparent: true,
+  opacity: 0.25,
+  depthWrite: false
+});
+const ghostEdgeMat = new THREE.LineBasicMaterial({ color: 0x8899bb, transparent: true, opacity: 0.35, depthTest: true });
+const ghostGeo = new THREE.BoxGeometry(0.92, 0.92, 0.92);
+const ghostEdgeGeo = new THREE.EdgesGeometry(ghostGeo);
+
+// 地面参考平面（尺寸足够大，适配 3/4/5 各模式）
+const floorGeo = new THREE.PlaneGeometry(200, 200);
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x222244, roughness: 0.9, depthWrite: true });
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -2.5;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// 重建目标网格（切换 3x3x3 / 4x4x4 / 5x5x5 时调用）
+function buildTargetGrid() {
+  targetMeshes.length = 0;
+  while (targetGroup.children.length) {
+    const c = targetGroup.children.pop();
+    targetGroup.remove(c);
+    if (c.geometry && c.geometry !== ghostGeo && c.geometry !== ghostEdgeGeo) c.geometry.dispose();
+  }
+
+  // 立方体线框
+  const boxSize = GRID_SIZE + 0.02;
+  const gridBoxGeo = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
+  const gridBoxEdge = new THREE.EdgesGeometry(gridBoxGeo);
+  gridBoxLine = new THREE.LineSegments(gridBoxEdge, new THREE.LineBasicMaterial({ color: 0x8899bb, transparent: true, opacity: 0.5 }));
+  targetGroup.add(gridBoxLine);
+  gridBoxGeo.dispose();
+
+  // 逐格生成空位指示
+  for (let x = 0; x < GRID_SIZE; x++) {
+    for (let y = 0; y < GRID_SIZE; y++) {
+      for (let z = 0; z < GRID_SIZE; z++) {
+        const wp = gridToWorld(x, y, z);
+        const ghostBox = new THREE.Mesh(ghostGeo, ghostMat.clone());
+        ghostBox.position.copy(wp);
+        ghostBox.userData = { gridPos: [x, y, z], isTarget: true };
+        targetGroup.add(ghostBox);
+        targetMeshes.push(ghostBox);
+
+        const ghostEdge = new THREE.LineSegments(ghostEdgeGeo, ghostEdgeMat.clone());
+        ghostEdge.position.copy(wp);
+        targetGroup.add(ghostEdge);
+      }
+    }
+  }
+}
+buildTargetGrid();
+
+// 异形块3D对象
+function createPieceGroup(pieceData, index) {
+  const group = new THREE.Group();
+  group.name = `piece-${index}`;
+
+  const boxGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+  const edgeGeo = new THREE.EdgesGeometry(boxGeo);
+  const colorHex = pieceData.color;
+
+  pieceData.blocks.forEach(([dx, dy, dz]) => {
+    const mat = new THREE.MeshStandardMaterial({
+      color: colorHex,
+      roughness: 0.35,
+      metalness: 0.15,
+    });
+    const box = new THREE.Mesh(boxGeo, mat);
+    box.position.set(dx, dy, dz);
+    box.castShadow = true;
+    box.receiveShadow = true;
+    box.userData = { pieceIndex: index, isBlock: true };
+    group.add(box);
+
+    const edge = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 }));
+    edge.position.set(dx, dy, dz);
+    group.add(edge);
+  });
+
+  // 发光轮廓（选中时显示）
+  const highlightGroup = new THREE.Group();
+  highlightGroup.visible = false;
+  pieceData.blocks.forEach(([dx, dy, dz]) => {
+    const hlGeo = new THREE.BoxGeometry(0.96, 0.96, 0.96);
+    const hlMat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.4, depthTest: true, depthWrite: false });
+    const hlBox = new THREE.Mesh(hlGeo, hlMat);
+    hlBox.position.set(dx, dy, dz);
+    highlightGroup.add(hlBox);
+  });
+  group.add(highlightGroup);
+  group.userData = { highlightGroup, pieceIndex: index };
+
+  allGroups.push(group);
+  return group;
+}
+
+// 块初始排列（从下往上，每行4个）
+let layoutExtent = null; // 排列区包围信息，供相机自动适配
+
+function arrangePieces(piecesArr) {
+  const n = piecesArr.length;
+  if (n === 0) { layoutExtent = null; return; }
+
+  // 逐块计算包围盒尺寸（旋转后可能变化）
+  const boxes = piecesArr.map(p => {
+    const xs = p.blocks.map(b => b[0]), ys = p.blocks.map(b => b[1]), zs = p.blocks.map(b => b[2]);
+    return {
+      w: Math.max(...xs) - Math.min(...xs) + 1,
+      h: Math.max(...ys) - Math.min(...ys) + 1,
+      d: Math.max(...zs) - Math.min(...zs) + 1
+    };
+  });
+  const maxW = Math.max(...boxes.map(b => b.w));
+  const maxH = Math.max(...boxes.map(b => b.h));
+  const maxD = Math.max(...boxes.map(b => b.d));
+
+  // 货架式紧凑排列：自动搜索行宽，使整体布局尽量接近方形（相机取景更饱满）
+  const gapX = 0.5, gapY = 0.6;
+  const half = gridHalf();
+  const zPos = half + maxD / 2 + 2.2;         // 排在立方体后方，随网格尺寸外推
+
+  function buildRows(rowWidth) {
+    const rows = [];
+    let cur = { items: [], width: 0, height: 0 };
+    piecesArr.forEach((pp, i) => {
+      const b = boxes[i];
+      if (cur.items.length > 0 && cur.width + b.w + gapX > rowWidth) {
+        rows.push(cur);
+        cur = { items: [], width: 0, height: 0 };
+      }
+      cur.items.push({ idx: i, w: b.w, h: b.h, offsetX: cur.items.length ? cur.width + gapX : 0 });
+      cur.width = cur.items.length > 1 ? cur.width + gapX + b.w : b.w;
+      cur.height = Math.max(cur.height, b.h);
+    });
+    if (cur.items.length) rows.push(cur);
+    return rows;
+  }
+
+  // 候选行宽：从最大块宽到平均块宽的 5 倍，取包围尺寸（长边）最小的方案
+  let rowsArr = buildRows(maxW);
+  let bestScore = Math.max(...rowsArr.map(r => r.width),
+    rowsArr.reduce((s2, r) => s2 + r.height, 0) + gapY * (rowsArr.length - 1));
+  for (let rw = maxW; rw <= maxW * 5; rw += 0.5) {
+    const cand = buildRows(rw);
+    const w = Math.max(...cand.map(r => r.width));
+    const h = cand.reduce((s2, r) => s2 + r.height, 0) + gapY * (cand.length - 1);
+    const score = Math.max(w, h);
+    if (score < bestScore - 0.01) { bestScore = score; rowsArr = cand; }
+  }
+
+  const maxRowW = Math.max(...rowsArr.map(r => r.width));
+  const totalH = rowsArr.reduce((s2, r) => s2 + r.height, 0) + gapY * (rowsArr.length - 1);
+  let yTop = totalH / 2;   // 从上往下排布
+
+  rowsArr.forEach(row => {
+    const rowLeft = -row.width / 2;
+    row.items.forEach(it => {
+      const p = piecesArr[it.idx];
+      const xs = p.blocks.map(b => b[0]), ys = p.blocks.map(b => b[1]);
+      const minX = Math.min(...xs), minY = Math.min(...ys);
+      // 包围盒左对齐槽位、底对齐行基线
+      p.group.position.set(
+        rowLeft + it.offsetX - minX,
+        yTop - row.height - minY,
+        zPos
+      );
+      scene.add(p.group);
+    });
+    yTop -= row.height + gapY;
+  });
+
+  layoutExtent = {
+    width: maxRowW,
+    depth: maxD,
+    zPos,
+    bottomY: yTop + gapY,                 // 最后一行底部
+    topY: totalH / 2
+  };
+
+  // 地板下移到排列区和立方体之下，避免方块穿地
+  floor.position.y = Math.min(yTop + gapY - 0.9, -(half + 0.9));
+}
+
+// 相机自动适配当前网格与排列区
+function fitCamera() {
+  const half = gridHalf() + 0.5;
+  let minX = -half, maxX = half, minY = -half, maxY = half, minZ = -half, maxZ = half;
+
+  if (layoutExtent) {
+    const hw = layoutExtent.width / 2;
+    minX = Math.min(minX, -hw);
+    maxX = Math.max(maxX, hw);
+    minY = Math.min(minY, layoutExtent.bottomY);
+    maxY = Math.max(maxY, layoutExtent.topY);
+    maxZ = Math.max(maxZ, layoutExtent.zPos + layoutExtent.depth / 2);
+  }
+
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const cz = (minZ + maxZ) / 2;
+  const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
+  const radius = Math.sqrt(dx * dx + dy * dy + dz * dz) / 2;
+
+  const fov = camera.fov * Math.PI / 180;
+  const dist = (radius / Math.sin(fov / 2)) * 1.05;
+
+  const dir = new THREE.Vector3(0.55, 0.42, 0.85).normalize().multiplyScalar(dist);
+  camera.position.set(cx + dir.x, cy + dir.y, cz + dir.z);
+  camera.far = Math.max(60, dist * 8);
+  camera.updateProjectionMatrix();
+
+  controls.target.set(cx, cy, cz);
+  controls.minDistance = Math.max(2, radius * 0.6);
+  controls.maxDistance = dist * 2.5;
+  controls.update();
+
+  // 雾效随规模外推，避免大场景被雾遮死
+  if (scene.fog) {
+    scene.fog.near = dist * 0.9;
+    scene.fog.far = dist * 3.2;
+  }
+
+  // 阴影范围同步放大
+  const shadowRange = Math.max(14, radius * 1.6);
+  sunLight.shadow.camera.left = -shadowRange;
+  sunLight.shadow.camera.right = shadowRange;
+  sunLight.shadow.camera.top = shadowRange;
+  sunLight.shadow.camera.bottom = -shadowRange;
+  sunLight.shadow.camera.far = dist * 6;
+  sunLight.shadow.camera.updateProjectionMatrix();
+}
+
+// ========== 游戏状态 ==========
+let pieces = [];
+let selectedPieceIndex = -1;
+let placedHistory = []; // 放置历史，用于撤销
+
+function getPieceByIndex(idx) {
+  return pieces.find((_, i) => i === idx) || null;
+}
+
+function updateSelectionHighlight() {
+  allGroups.forEach(g => {
+    const hl = g.userData.highlightGroup;
+    if (hl) hl.visible = false;
+  });
+  if (selectedPieceIndex >= 0 && selectedPieceIndex < pieces.length) {
+    const piece = pieces[selectedPieceIndex];
+    if (!piece.placed && piece.group) {
+      const hl = piece.group.userData.highlightGroup;
+      if (hl) hl.visible = true;
+    }
+  }
+}
+
+function updateButtonStates() {
+  const hasSelection = selectedPieceIndex >= 0 && selectedPieceIndex < pieces.length && !pieces[selectedPieceIndex].placed;
+  document.querySelectorAll('#ui-panel button[id^="btn-r"]').forEach(b => b.disabled = !hasSelection);
+  document.getElementById('btn-undo').disabled = placedHistory.length === 0;
+
+  const remaining = getRemainingCount();
+  document.getElementById('remain-count').textContent = remaining;
+}
+
+function getRemainingCount() {
+  const placed = pieces.filter(p => p.placed).reduce((s, p) => s + p.blocks.length, 0);
+  return TOTAL_CELLS - placed;
+}
+
+function getPlacedGridSet() {
+  const set = new Set();
+  pieces.filter(p => p.placed).forEach(p => {
+    const [gx, gy, gz] = p.gridPos;
+    p.blocks.forEach(([dx, dy, dz]) => {
+      set.add([gx + dx, gy + dy, gz + dz].join(','));
+    });
+  });
+  return set;
+}
+
+// ========== 放置逻辑 ==========
+function canPlacePiece(pieceIndex, targetGridX, targetGridY, targetGridZ) {
+  const piece = pieces[pieceIndex];
+  if (!piece || piece.placed) return false;
+
+  const placedSet = getPlacedGridSet();
+  for (const [dx, dy, dz] of piece.blocks) {
+    const gx = targetGridX + dx;
+    const gy = targetGridY + dy;
+    const gz = targetGridZ + dz;
+    if (gx < 0 || gx >= GRID_SIZE || gy < 0 || gy >= GRID_SIZE || gz < 0 || gz >= GRID_SIZE) return false;
+    if (placedSet.has([gx, gy, gz].join(','))) return false;
+  }
+  return true;
+}
+
+function setGroupOpacity(group, opacity) {
+  group.traverse(child => {
+    if (child.isMesh && child.material.isMeshStandardMaterial) {
+      child.material.transparent = opacity < 0.99;
+      child.material.opacity = opacity;
+      child.material.needsUpdate = true;
+    }
+  });
+}
+
+function placePiece(pieceIndex, targetGridX, targetGridY, targetGridZ) {
+  const piece = pieces[pieceIndex];
+  if (!canPlacePiece(pieceIndex, targetGridX, targetGridY, targetGridZ)) return false;
+
+  const worldPos = gridToWorld(targetGridX, targetGridY, targetGridZ);
+  piece.group.position.copy(worldPos);
+  piece.placed = true;
+  piece.gridPos = [targetGridX, targetGridY, targetGridZ];
+
+  // 已放置块半透明显示
+  setGroupOpacity(piece.group, 0.55);
+
+  // 更新目标网格显示
+  updateTargetGhosts();
+
+  // 记录历史
+  placedHistory.push({ pieceIndex, gridPos: [targetGridX, targetGridY, targetGridZ], prevPos: piece.group.position.clone() });
+
+  // 检查胜利
+  if (getRemainingCount() === 0) {
+    setTimeout(() => document.getElementById('win-overlay').classList.add('show'), 400);
+  }
+
+  selectedPieceIndex = -1;
+  updateSelectionHighlight();
+  updateButtonStates();
+  return true;
+}
+
+function undoLastPlacement() {
+  if (placedHistory.length === 0) return;
+  const record = placedHistory.pop();
+  const piece = pieces[record.pieceIndex];
+  piece.placed = false;
+  piece.gridPos = null;
+  piece.group.position.copy(record.prevPos);
+
+  // 恢复不透明度
+  setGroupOpacity(piece.group, 1.0);
+
+  // 取消选中
+  if (selectedPieceIndex === record.pieceIndex) {
+    selectedPieceIndex = -1;
+  }
+  updateTargetGhosts();
+  updateSelectionHighlight();
+  updateButtonStates();
+}
+
+function updateTargetGhosts() {
+  const placedSet = getPlacedGridSet();
+  targetMeshes.forEach(mesh => {
+    const [gx, gy, gz] = mesh.userData.gridPos;
+    const key = [gx, gy, gz].join(',');
+    mesh.visible = !placedSet.has(key);
+    // 也更新关联的edge
+    const edge = targetGroup.children.find(c => {
+      if (!c.isLineSegments) return false;
+      return c.position.distanceTo(mesh.position) < 0.01;
+    });
+    if (edge) edge.visible = mesh.visible;
+  });
+  // 更新所有 ghost edge
+  targetGroup.children.forEach(c => {
+    if (c.isLineSegments && c !== gridBoxLine) {
+      const nearbyGhost = targetMeshes.find(m => m.position.distanceTo(c.position) < 0.01);
+      if (nearbyGhost) c.visible = nearbyGhost.visible;
+    }
+  });
+}
+
+// ========== 翻转逻辑 ==========
+function rotatePieceBlocks(blocks, axis) {
+  // axis: 'x', 'y', 'z', 顺时针90°
+  return blocks.map(([x, y, z]) => {
+    switch (axis) {
+      case 'x': return [x, -z, y];   // Rx(90°)
+      case 'y': return [z, y, -x];   // Ry(90°)
+      case 'z': return [-y, x, z];   // Rz(90°)
+      default: return [x, y, z];
+    }
+  });
+}
+
+function rotatePieceBlocksCCW(blocks, axis) {
+  return blocks.map(([x, y, z]) => {
+    switch (axis) {
+      case 'x': return [x, z, -y];   // Rx(-90°)
+      case 'y': return [-z, y, x];   // Ry(-90°)
+      case 'z': return [y, -x, z];   // Rz(-90°)
+      default: return [x, y, z];
+    }
+  });
+}
+
+function applyRotation(pieceIndex, axis, clockwise) {
+  const piece = pieces[pieceIndex];
+  if (!piece || piece.placed) return;
+
+  const newBlocks = clockwise
+    ? rotatePieceBlocks(piece.blocks, axis)
+    : rotatePieceBlocksCCW(piece.blocks, axis);
+
+  piece.blocks = newBlocks;
+
+  // 重建group中的方块
+  rebuildPieceGroup(piece);
+}
+
+function rebuildPieceGroup(piece) {
+  const group = piece.group;
+  // 移除旧方块
+  while (group.children.length > 1) { // 保留highlightGroup
+    const child = group.children[0];
+    if (child === group.userData.highlightGroup) break;
+    group.remove(child);
+  }
+  // 先移除所有非highlight的子对象
+  const toRemove = [];
+  group.children.forEach(c => {
+    if (c !== group.userData.highlightGroup) toRemove.push(c);
+  });
+  toRemove.forEach(c => group.remove(c));
+
+  // 重建
+  const boxGeo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+  const edgeGeo = new THREE.EdgesGeometry(boxGeo);
+  const colorHex = piece.color;
+
+  piece.blocks.forEach(([dx, dy, dz]) => {
+    const mat = new THREE.MeshStandardMaterial({
+      color: colorHex,
+      roughness: 0.35,
+      metalness: 0.15,
+    });
+    const box = new THREE.Mesh(boxGeo, mat);
+    box.position.set(dx, dy, dz);
+    box.castShadow = true;
+    box.receiveShadow = true;
+    box.userData = { pieceIndex: pieces.indexOf(piece), isBlock: true };
+    group.add(box);
+
+    const edge = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.25 }));
+    edge.position.set(dx, dy, dz);
+    group.add(edge);
+  });
+
+  // 更新高亮
+  const hlGroup = group.userData.highlightGroup;
+  if (hlGroup) {
+    while (hlGroup.children.length > 0) hlGroup.remove(hlGroup.children[0]);
+    piece.blocks.forEach(([dx, dy, dz]) => {
+      const hlGeo = new THREE.BoxGeometry(0.96, 0.96, 0.96);
+      const hlMat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.4, depthTest: true, depthWrite: false });
+      const hlBox = new THREE.Mesh(hlGeo, hlMat);
+      hlBox.position.set(dx, dy, dz);
+      hlGroup.add(hlBox);
+    });
+  }
+}
+
+// ========== 拖拽状态 ==========
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const dragOffset = new THREE.Vector3();
+const dragStartPos = new THREE.Vector3();
+let isDragging = false;
+let dragPieceIndex = -1;
+let mouseDownPos = { x: 0, y: 0 };
+const DRAG_THRESHOLD = 4;
+
+function getIntersections(event) {
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const pieceTargets = pieces.filter(p => !p.placed).map(p => p.group);
+  const allTargets = [...pieceTargets, ...targetMeshes.filter(m => m.visible)];
+  return raycaster.intersectObjects(allTargets, true);
+}
+
+function findPieceGroupFromIntersect(intersect) {
+  let obj = intersect.object;
+  let current = obj;
+  while (current) {
+    if (current.userData && current.userData.pieceIndex !== undefined && current.userData.isBlock) {
+      return { group: current.parent, index: current.userData.pieceIndex };
+    }
+    if (current.name && current.name.startsWith('piece-')) {
+      return { group: current, index: current.userData.pieceIndex };
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function intersectDragPlane(event) {
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const intersection = new THREE.Vector3();
+  const hit = raycaster.ray.intersectPlane(dragPlane, intersection);
+  return hit ? intersection : null;
+}
+
+function findBestGridPosition(pieceIndex, worldPos) {
+  const piece = pieces[pieceIndex];
+  let bestDist = Infinity;
+  let bestPos = null;
+
+  for (let gx = 0; gx < GRID_SIZE; gx++) {
+    for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gz = 0; gz < GRID_SIZE; gz++) {
+        if (canPlacePiece(pieceIndex, gx, gy, gz)) {
+          const anchorWorld = gridToWorld(gx, gy, gz);
+          const dist = anchorWorld.distanceTo(worldPos);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestPos = [gx, gy, gz];
+          }
+        }
+      }
+    }
+  }
+  return bestPos;
+}
+
+// ========== 鼠标事件 ==========
+renderer.domElement.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  if (event.target.closest('#ui-panel') || event.target.closest('#win-overlay')) return;
+
+  mouseDownPos = { x: event.clientX, y: event.clientY };
+  const intersections = getIntersections(event);
+
+  if (intersections.length === 0) {
+    // 没命中未放置块或空位，检测已放置块
+    const placedGroups = pieces.filter(p => p.placed && p.group).map(p => p.group);
+    if (placedGroups.length > 0) {
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const placedHits = raycaster.intersectObjects(placedGroups, true);
+      if (placedHits.length > 0) {
+        let obj = placedHits[0].object;
+        while (obj) {
+          if (obj.userData && obj.userData.isBlock) {
+            const pIdx = obj.userData.pieceIndex;
+            if (pieces[pIdx] && pieces[pIdx].placed) {
+              // 单击已放置块 → 撤销该块的放置
+              const histIdx = placedHistory.findIndex(h => h.pieceIndex === pIdx);
+              if (histIdx >= 0) {
+                const toUndo = placedHistory.splice(histIdx);
+                toUndo.reverse().forEach(record => {
+                  const p = pieces[record.pieceIndex];
+                  p.placed = false;
+                  p.gridPos = null;
+                  p.group.position.copy(record.prevPos);
+                  setGroupOpacity(p.group, 1.0);
+                });
+                if (selectedPieceIndex >= 0) selectedPieceIndex = -1;
+                updateTargetGhosts();
+                updateSelectionHighlight();
+                updateButtonStates();
+              }
+              return;
+            }
+          }
+          obj = obj.parent;
+        }
+      }
+    }
+    selectedPieceIndex = -1;
+    updateSelectionHighlight();
+    updateButtonStates();
+    return;
+  }
+
+  const result = findPieceGroupFromIntersect(intersections[0]);
+  if (result && pieces[result.index] && !pieces[result.index].placed) {
+    dragPieceIndex = result.index;
+    dragStartPos.copy(pieces[result.index].group.position);
+    // 拖拽平面：经过块中心、法线为相机前向（让块在屏幕空间跟随鼠标）
+    const cameraDir = new THREE.Vector3();
+    camera.getWorldDirection(cameraDir);
+    dragPlane.set(cameraDir, -dragStartPos.dot(cameraDir));
+    const hit = intersectDragPlane(event);
+    if (hit) dragOffset.copy(dragStartPos).sub(hit);
+    selectedPieceIndex = result.index;
+    updateSelectionHighlight();
+    updateButtonStates();
+  }
+});
+
+renderer.domElement.addEventListener('pointermove', (event) => {
+  if (dragPieceIndex < 0) return;
+
+  const dx = event.clientX - mouseDownPos.x;
+  const dy = event.clientY - mouseDownPos.y;
+  if (!isDragging && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+    isDragging = true;
+    controls.enabled = false;
+  }
+  if (!isDragging) return;
+
+  const hit = intersectDragPlane(event);
+  if (hit) {
+    const newPos = hit.add(dragOffset);
+    pieces[dragPieceIndex].group.position.copy(newPos);
+
+    // 实时预览最佳放置位置
+    const bestPos = findBestGridPosition(dragPieceIndex, newPos);
+    const statusEl = document.getElementById('info-status');
+    const hintEl = document.getElementById('info-hint');
+    if (bestPos && newPos.distanceTo(gridToWorld(...bestPos)) < 4.0) {
+      statusEl.style.display = 'inline';
+      statusEl.style.color = '#4ecdc4';
+      statusEl.textContent = '✓ 松开放置';
+      hintEl.textContent = '释放鼠标即可放置';
+    } else {
+      statusEl.style.display = 'inline';
+      statusEl.style.color = '#ff6b6b';
+      statusEl.textContent = '✗ 此处无法放置';
+      hintEl.textContent = '拖到立方体附近再松开';
+    }
+  }
+});
+
+renderer.domElement.addEventListener('pointerup', (event) => {
+  if (dragPieceIndex < 0) return;
+
+  // 清理拖拽状态提示
+  const statusEl = document.getElementById('info-status');
+  statusEl.style.display = 'none';
+  document.getElementById('info-hint').textContent = '拖拽异形块到目标立方体上松开即可放置';
+
+  if (isDragging) {
+    // 拖拽结束：尝试吸附
+    const piece = pieces[dragPieceIndex];
+    const worldPos = piece.group.position.clone();
+    const bestPos = findBestGridPosition(dragPieceIndex, worldPos);
+
+    if (bestPos && piece.group.position.distanceTo(gridToWorld(...bestPos)) < 4.0) {
+      placePiece(dragPieceIndex, bestPos[0], bestPos[1], bestPos[2]);
+    } else {
+      // 回到原位
+      piece.group.position.copy(dragStartPos);
+    }
+    isDragging = false;
+    controls.enabled = true;
+  } else {
+    // 点击（未拖动）：原有选中逻辑
+    const piece = pieces[dragPieceIndex];
+    if (piece && !piece.placed) {
+      selectedPieceIndex = dragPieceIndex;
+      updateSelectionHighlight();
+      updateButtonStates();
+    }
+  }
+
+  dragPieceIndex = -1;
+});
+
+function flashTarget(mesh) {
+  const origOpacity = mesh.material.opacity;
+  mesh.material.opacity = 0.7;
+  mesh.material.color.set(0xff4444);
+  setTimeout(() => {
+    mesh.material.opacity = origOpacity;
+    mesh.material.color.set(0xccccdd);
+  }, 250);
+}
+
+// 键盘快捷键
+window.addEventListener('keydown', (e) => {
+  if (selectedPieceIndex < 0 || pieces[selectedPieceIndex].placed) return;
+
+  switch (e.key.toLowerCase()) {
+    case 'q': applyRotation(selectedPieceIndex, 'x', true); updateSelectionHighlight(); break;
+    case 'a': applyRotation(selectedPieceIndex, 'x', false); updateSelectionHighlight(); break;
+    case 'w': applyRotation(selectedPieceIndex, 'y', true); updateSelectionHighlight(); break;
+    case 's': applyRotation(selectedPieceIndex, 'y', false); updateSelectionHighlight(); break;
+    case 'e': applyRotation(selectedPieceIndex, 'z', true); updateSelectionHighlight(); break;
+    case 'd': applyRotation(selectedPieceIndex, 'z', false); updateSelectionHighlight(); break;
+    case 'escape':
+      if (isDragging) {
+        pieces[dragPieceIndex].group.position.copy(dragStartPos);
+        isDragging = false;
+        controls.enabled = true;
+        dragPieceIndex = -1;
+        document.getElementById('info-status').style.display = 'none';
+        document.getElementById('info-hint').textContent = '拖拽异形块到目标立方体上松开即可放置';
+      }
+      selectedPieceIndex = -1;
+      updateSelectionHighlight();
+      updateButtonStates();
+      break;
+    case 'z': if (e.ctrlKey) { e.preventDefault(); undoLastPlacement(); } break;
+  }
+});
+
+// ========== 按钮事件 ==========
+document.getElementById('btn-rx-cw').addEventListener('click', () => { applyRotation(selectedPieceIndex, 'x', true); updateSelectionHighlight(); });
+document.getElementById('btn-rx-ccw').addEventListener('click', () => { applyRotation(selectedPieceIndex, 'x', false); updateSelectionHighlight(); });
+document.getElementById('btn-ry-cw').addEventListener('click', () => { applyRotation(selectedPieceIndex, 'y', true); updateSelectionHighlight(); });
+document.getElementById('btn-ry-ccw').addEventListener('click', () => { applyRotation(selectedPieceIndex, 'y', false); updateSelectionHighlight(); });
+document.getElementById('btn-rz-cw').addEventListener('click', () => { applyRotation(selectedPieceIndex, 'z', true); updateSelectionHighlight(); });
+document.getElementById('btn-rz-ccw').addEventListener('click', () => { applyRotation(selectedPieceIndex, 'z', false); updateSelectionHighlight(); });
+document.getElementById('btn-undo').addEventListener('click', undoLastPlacement);
+document.getElementById('btn-new-puzzle').addEventListener('click', newPuzzle);
+document.getElementById('btn-reset').addEventListener('click', resetGame);
+document.getElementById('btn-replay').addEventListener('click', () => {
+  document.getElementById('win-overlay').classList.remove('show');
+  newPuzzle();
+});
+
+// ========== 模式切换 ==========
+function clearAllPieces() {
+  pieces.forEach(p => {
+    if (p.group) scene.remove(p.group);
+    if (p.group && p.group.userData && p.group.userData.disposeHighlight) {
+      p.group.userData.disposeHighlight();
+    }
+  });
+  pieces = [];
+  allGroups.length = 0;
+  placedHistory = [];
+  selectedPieceIndex = -1;
+}
+
+function updateModeButtons() {
+  [3, 4, 5].forEach(n => {
+    const btn = document.getElementById('btn-mode-' + n);
+    if (!btn) return;
+    if (n === GRID_SIZE) btn.classList.add('primary');
+    else btn.classList.remove('primary');
+  });
+  const label = document.getElementById('mode-label');
+  if (label) label.textContent = GRID_SIZE + '×' + GRID_SIZE + '×' + GRID_SIZE;
+}
+
+function setMode(n) {
+  if (!MODE_CONFIG[n] || n === GRID_SIZE) return;
+  GRID_SIZE = n;
+  TOTAL_CELLS = n ** 3;
+  PIECE_MIN = MODE_CONFIG[n].min;
+  PIECE_MAX = MODE_CONFIG[n].max;
+
+  clearAllPieces();
+  layoutExtent = null;
+  document.getElementById('win-overlay').classList.remove('show');
+
+  buildTargetGrid();
+  newPuzzle();          // 内部会 arrangePieces + fitCamera
+  updateModeButtons();
+}
+
+[3, 4, 5].forEach(n => {
+  const btn = document.getElementById('btn-mode-' + n);
+  if (btn) btn.addEventListener('click', () => setMode(n));
+});
+
+function newPuzzle() {
+  pieces.forEach(p => {
+    if (p.group) scene.remove(p.group);
+  });
+  allGroups.length = 0;
+  placedHistory = [];
+  selectedPieceIndex = -1;
+  document.getElementById('win-overlay').classList.remove('show');
+
+  pieces = generatePieces();
+  pieces.forEach((p, i) => {
+    p.group = createPieceGroup(p, i);
+    p.placed = false;
+    p.gridPos = null;
+  });
+  arrangePieces(pieces);
+  fitCamera();
+  updateTargetGhosts();
+  updateSelectionHighlight();
+  updateButtonStates();
+  document.getElementById('remain-count').textContent = TOTAL_CELLS;
+}
+
+function resetGame() {
+  // 清理旧对象
+  pieces.forEach(p => {
+    if (p.group) {
+      scene.remove(p.group);
+      if (p.group.userData.highlightGroup) {
+        // 清理材质
+      }
+    }
+  });
+  allGroups.length = 0;
+  placedHistory = [];
+  selectedPieceIndex = -1;
+
+  // 重新生成
+  pieces = generatePieces();
+  pieces.forEach((p, i) => {
+    p.group = createPieceGroup(p, i);
+    p.placed = false;
+    p.gridPos = null;
+  });
+  arrangePieces(pieces);
+  fitCamera();
+  updateTargetGhosts();
+  updateSelectionHighlight();
+  updateButtonStates();
+  document.getElementById('win-overlay').classList.remove('show');
+  document.getElementById('remain-count').textContent = TOTAL_CELLS;
+}
+
+// ========== 渲染循环 ==========
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+
+  // 选中块轻微浮动动画
+  if (selectedPieceIndex >= 0 && !pieces[selectedPieceIndex].placed) {
+    const group = pieces[selectedPieceIndex].group;
+    const baseY = group.position.y;
+    // 不修改位置，保持静态
+  }
+
+  renderer.render(scene, camera);
+}
+
+// ========== 响应式处理 ==========
+window.addEventListener('resize', () => {
+  camera.aspect = container.clientWidth / container.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(container.clientWidth, container.clientHeight);
+});
+
+// ========== 启动 ==========
+pieces = generatePieces();
+pieces.forEach((p, i) => {
+  p.group = createPieceGroup(p, i);
+  p.placed = false;
+  p.gridPos = null;
+});
+arrangePieces(pieces);
+fitCamera();
+updateTargetGhosts();
+updateModeButtons();
+updateButtonStates();
+animate();
+
+console.log(`已生成 ${pieces.length} 个异形块，共 ${pieces.reduce((s,p)=>s+p.blocks.length,0)} 个方块`);
+console.log('操作：拖拽异形块到目标立方体松开自动吸附 | 点击已放置块撤销 | 右键旋转视角');
+console.log('翻转：选中块后用底部按钮或键盘 Q/A=X轴 W/S=Y轴 E/D=Z轴');
+console.log('Ctrl+Z 撤销 | Esc 取消 | 重新出题按钮随机新题目');
+</script>
+</body>
+</html>
